@@ -56,7 +56,7 @@ cd $ROOT/scripts/pack/
 cp $ROOT/output/pack/out/boot0_sdcard.fex $ROOT/output/boot0.bin
 cp $ROOT/output/pack/out/boot_package.fex $ROOT/output/uboot.bin
 
-rm -rf $ROOT/output/pack/out
+rm -rf $ROOT/output/pack
 
 # Change to scripts direct.
 cd -

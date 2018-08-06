@@ -107,12 +107,13 @@ if [ $BUILD_KERNEL = "1" ]; then
 cat <<EOF > "$BUILD/uEnv.txt"
 console=tty0 console=ttyS0,115200n8 no_console_suspend
 kernel_filename=orangepi/uImage
-initrd_filename=initrd.img
+initrd_filename=initrd_sdcard.gz
 EOF
 
 	## Build initrd.img
 	echo -e "\e[1;31m Build initrd.img \e[0m"
 	cp -rfa $ROOT/external/initrd.img $BUILD
+	cp -rfa $ROOT/external/initrd_sdcard.gz $BUILD
 fi 
 
 whiptail --title "OrangePi Build System" --msgbox \

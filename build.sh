@@ -212,16 +212,16 @@ if [ $OPTION = "0" -o $OPTION = "1" ]; then
 			whiptail --title "OrangePi Build System" --msgbox "Rootfs has build" \
 				10 40 0	--ok-button Continue
 		else
-			sudo -E bash -c "./build_rootfs.sh $DISTRO"
+			sudo PATH=$PATH bash -c "./build_rootfs.sh $DISTRO"
 		fi
 
 	else
-		sudo -E bash -c "./build_rootfs.sh $DISTRO"
+		sudo PATH=$PATH bash -c "./build_rootfs.sh $DISTRO"
 	fi
 
 	# Package rootfs
-	if [ $TMP = "0" ]; then 
-		./build_image.sh $PLATFORM
+	if [ $TMP = "0" ]; then
+		sudo PATH=$PATH bash -c "./build_image.sh $PLATFORM"
 		whiptail --title "OrangePi Build System" --msgbox "Succeed to build Image" \
 				10 40 0	--ok-button Continue
 	fi

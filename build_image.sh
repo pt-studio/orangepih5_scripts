@@ -6,12 +6,14 @@
 ################################################################
 set -e
 
+export PATH=$PATH:/sbin:/usr/local/sbin:/usr/sbin
+
 if [ -z $ROOT ]; then
 	ROOT=`cd .. && pwd`
 fi
 
 if [ -z $1 ]; then
-	PLATFORM="OrangePiH5_PC2"
+	PLATFORM="OrangePiH5_Zero_Plus2"
 else
 	PLATFORM=$1
 fi
@@ -89,6 +91,7 @@ cp $OUTPUT/OrangePiH5.dtb $OUTPUT/orangepi/OrangePiH5.dtb
 # Add boot support if there
 mcopy -sm -i /dev/loop0p1 ${OUTPUT}/orangepi ::
 mcopy -m -i /dev/loop0p1 ${OUTPUT}/initrd.img :: || true
+mcopy -m -i /dev/loop0p1 ${OUTPUT}/initrd_sdcard.gz :: || true
 mcopy -m -i /dev/loop0p1 ${OUTPUT}/uEnv.txt :: || true
 
 # Create additional ext4 file system for rootfs

@@ -5,6 +5,9 @@ set -e
 ##
 ## Build rootfs
 ########################################################################
+
+export PATH=$PATH:/sbin:/usr/local/sbin:/usr/sbin
+
 if [ -z $ROOT ]; then
 	ROOT=`cd .. && pwd`
 fi
@@ -295,7 +298,8 @@ case $DISTRO in
 			DEBUSER=orangepi
 			EXTRADEBS="software-properties-common zram-config ubuntu-minimal nano"
 			ADDPPACMD=
-			DISPTOOLCMD="apt-get -y install sunxi-disp-tool"
+			#DISPTOOLCMD="apt-get -y install sunxi-disp-tool"
+			DISPTOOLCMD=
 		elif [ "$DISTRO" = "sid" -o "$DISTRO" = "jessie" ]; then
 			DEB=debian
 			DEBUSER=orangepi
