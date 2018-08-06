@@ -9,17 +9,12 @@ set -e
 if [ -z $ROOT ]; then
 	ROOT=`cd .. && pwd`
 fi
-# PLATFORM.
-if [ -z $PLATFORM ]; then
-	PLATFORM="OrangePiH5_PC2"
-fi
 # Uboot direct
 UBOOT=$ROOT/uboot
 # Compile Toolchain
-TOOLS=$ROOT/toolchain/gcc-linaro-aarch/gcc-linaro/bin/arm-linux-gnueabihf-
 
 BUILD=$ROOT/output
-CORES=$((`cat /proc/cpuinfo | grep processor | wc -l` - 1))
+CORES=$((`cat /proc/cpuinfo | grep processor | wc -l` + 1))
 
 # Perpar souce code
 if [ ! -d $UBOOT ]; then
@@ -30,19 +25,22 @@ if [ ! -d $UBOOT ]; then
 fi
 
 cd $UBOOT
-clear
+echo "Cleaning..."
+make clean
+
 echo "Compile U-boot......"
-if [ ! -f $UBOOT/u-boot-sun50iw2p1.bin ]; then
-	make  sun50iw2p1_config
-fi
-make -j${CORES}
+# if [ ! -f $UBOOT/u-boot-sun50iw2p1.bin ]; then
+	make -j${CORES} CROSS_COMPILE="${UBOOT_TOOLCHAIN}" sun50iw2p1_config
+# fi
+
+make -j${CORES} CROSS_COMPILE="${UBOOT_TOOLCHAIN}"
 echo "Complete compile...."
 
 echo "Compile boot0......"
-if [ ! -f $UBOOT/sunxi_spl/boot0/boot0_sdcard.bin ]; then
-	make  sun50iw2p1_config
-fi
-make spl 
+# if [ ! -f $UBOOT/sunxi_spl/boot0/boot0_sdcard.bin ]; then
+	make -j${CORES} CROSS_COMPILE="${UBOOT_TOOLCHAIN}" sun50iw2p1_config
+# fi
+make CROSS_COMPILE="${UBOOT_TOOLCHAIN}" spl 
 cd -
 echo "Complete compile...."
 #####################################################################
@@ -54,7 +52,7 @@ cd $ROOT/scripts/pack/
 ./pack
 
 ###
-# Cpoy output file
+# Copy output file
 cp $ROOT/output/pack/out/boot0_sdcard.fex $ROOT/output/boot0.bin
 cp $ROOT/output/pack/out/boot_package.fex $ROOT/output/uboot.bin
 

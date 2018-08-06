@@ -20,7 +20,6 @@ OUTPUT="$ROOT/output"
 DEST="$OUTPUT/rootfs"
 LINUX="$ROOT/kernel"
 SCRIPTS="$ROOT/scripts"
-TOOLCHAIN="$ROOT/toolchain/gcc-linaro-aarch/bin/aarch64-linux-gnu-"
 
 if [ -z "$DEST" -o -z "$LINUX" ]; then
 	echo "Usage: $0 <destination-folder> <linux-folder> [distro] $DEST"
@@ -294,7 +293,7 @@ case $DISTRO in
 		if [ "$DISTRO" = "xenial" ]; then
 			DEB=ubuntu
 			DEBUSER=orangepi
-			EXTRADEBS="software-properties-common zram-config ubuntu-minimal"
+			EXTRADEBS="software-properties-common zram-config ubuntu-minimal nano"
 			ADDPPACMD=
 			DISPTOOLCMD="apt-get -y install sunxi-disp-tool"
 		elif [ "$DISTRO" = "sid" -o "$DISTRO" = "jessie" ]; then
@@ -311,8 +310,11 @@ case $DISTRO in
 		cat > "$DEST/second-phase" <<EOF
 #!/bin/sh
 export DEBIAN_FRONTEND=noninteractive
-locale-gen en_US.UTF-8
+export http_proxy=http://127.0.0.1:3142/
+export https_proxy=http://127.0.0.1:3142/
 apt-get -y update
+apt-get -y install locales
+locale-gen en_US.UTF-8
 apt-get -y install dosfstools curl xz-utils iw rfkill wpasupplicant openssh-server alsa-utils $EXTRADEBS
 apt-get -y remove --purge ureadahead
 $ADDPPACMD
@@ -325,6 +327,13 @@ echo "$DEBUSER:$DEBUSER" | chpasswd
 usermod -a -G sudo,adm,input,video,plugdev $DEBUSER
 apt-get -y autoremove
 apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+rm -f /etc/resolv.conf
+ln -s /run/resolvconf/resolv.conf /etc/resolv.conf
+
+rm -rf /etc/ssh/ssh_host_*
+
 EOF
 		chmod +x "$DEST/second-phase"
 		do_chroot /second-phase
@@ -352,11 +361,9 @@ EOF
 		add_ssh_keygen_service
 		add_disp_udev_rules
 		add_asound_state
+
 		sed -i 's|After=rc.local.service|#\0|;' "$DEST/lib/systemd/system/serial-getty@.service"
 		rm -f "$DEST/second-phase"
-		rm -f "$DEST/etc/resolv.conf"
-		rm -f "$DEST"/etc/ssh/ssh_host_*
-		do_chroot ln -s /run/resolvconf/resolv.conf /etc/resolv.conf
 		;;
 	*)
 		;;
@@ -369,17 +376,24 @@ mkdir -p "$DEST/usr"
 # Create fstab
 cat <<EOF > "$DEST/etc/fstab"
 # <file system>	<dir>	<type>	<options>			<dump>	<pass>
-/dev/mmcblk0p1	/boot	vfat	defaults			0		2
-/dev/mmcblk0p2	/	ext4	defaults,noatime		0		1
+/dev/mmcblk1p1	/boot	vfat	defaults				1		2
+/dev/mmcblk1p2	/		ext4	defaults,noatime		1		1
 EOF
 
 # Clean up
 rm -f "$DEST/usr/bin/qemu-aarch64-static"
 rm -f "$DEST/usr/sbin/policy-rc.d"
 
-if [ ! -d $DEST/lib/modules ]; then
-	mkdir "$DEST/lib/modules"
-else
-	rm -rf $DEST/lib/modules
-	mkdir "$DEST/lib/modules"
-fi
+rm -rf $DEST/lib/modules
+mkdir -p "$DEST/lib/modules"
+
+echo 'Install kernel modules'
+make -C $LINUX ARCH=arm64 CROSS_COMPILE="${LINUX_TOOLCHAIN}" modules_install INSTALL_MOD_PATH="$DEST"
+
+echo 'Install mali driver'
+MALI_MOD_DIR_REL=lib/modules/`cat $LINUX/include/config/kernel.release 2> /dev/null`/kernel/drivers/gpu
+install -d "$DEST"/"$MALI_MOD_DIR_REL"
+cp "$OUTPUT"/"$MALI_MOD_DIR_REL"/mali.ko "$DEST"/"$MALI_MOD_DIR_REL"
+
+echo 'Install kernel firmware'
+make -C $LINUX ARCH=arm64 CROSS_COMPILE="${LINUX_TOOLCHAIN}" firmware_install INSTALL_MOD_PATH="$DEST"

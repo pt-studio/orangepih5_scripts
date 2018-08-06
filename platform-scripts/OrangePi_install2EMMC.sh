@@ -169,11 +169,11 @@ sync
 echo "  Creating \"fstab\""
 echo "# OrangePI fstab" > $odir/etc/fstab
 if [ "${_format}" = "btrfs" ] ; then
-    echo "/dev/mmcblk0p2  /  btrfs subvolid=0,noatime,nodiratime,compress=lzo  0 1" >> $odir/etc/fstab
+    echo "/dev/mmcblk0p2  /  btrfs subvolid=0,noatime,nodiratime,compress=lzo  1 1" >> $odir/etc/fstab
 else
-    echo "/dev/mmcblk0p2  /  ext4  errors=remount-ro,noatime,nodiratime  0 1" >> $odir/etc/fstab
+    echo "/dev/mmcblk0p2  /  ext4  errors=remount-ro,noatime,nodiratime  1 1" >> $odir/etc/fstab
 fi
-echo "/dev/mmcblk0p1  /media/boot  vfat  defaults  0 0" >> $odir/etc/fstab
+echo "/dev/mmcblk0p1  /media/boot  vfat  defaults  1 2" >> $odir/etc/fstab
 echo "tmpfs /tmp  tmpfs nodev,nosuid,mode=1777  0 0" >> $odir/etc/fstab
 sync
 

@@ -10,7 +10,7 @@ if [ -z $ROOT ]; then
 fi
 # Platform
 if [ -z $PLATFORM ]; then
-	PLATFORM="OrangePiH5_PC2"
+	PLATFORM="OrangePiH5_Zero_Plus2"
 fi
 # Cleanup
 if [ -z $CLEANUP ]; then
@@ -27,10 +27,10 @@ fi
 # Knernel Direct
 LINUX=$ROOT/kernel
 # Compile Toolchain
-TOOLS=$ROOT/toolchain/gcc-linaro-aarch/bin/aarch64-linux-gnu-
+TOOLS="ccache aarch64-linux-gnu-"
 # OUTPUT DIRECT
 BUILD=$ROOT/output
-CORES=1
+CORES=$((`cat /proc/cpuinfo | grep processor | wc -l` + 1))
 
 if [ ! -d $BUILD ]; then
 	mkdir -p $BUILD
@@ -43,40 +43,40 @@ if [ ! -d $LINUX ]; then
 	exit 0
 fi
 
-clear
-echo -e "\e[1;31m Start Compile.....\e[0m"
+echo -e "\e[1;31m Begin Compile Kernel Stage.....\e[0m"
 
 if [ $CLEANUP = "1" ]; then
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS clean
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" clean
 	echo -e "\e[1;31m Clean up kernel \e[0m"
 fi
 
 if [ ! -f $LINUX/.config ]; then
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS ${PLATFORM}_linux_defconfig
-	echo -e "\e[1;31m Using ${PLATFROM}_linux_defconfig \e[0m"
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" ${PLATFORM}_defconfig
+	echo -e "\e[1;31m Using ${PLATFORM}_linux_defconfig \e[0m"
 fi
 
 if [ $BUILD_KERNEL = "1" ]; then
 	# make kernel
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS -j${CORES} Image
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" -j${CORES} Image
 fi
 
 if [ $BUILD_MODULE = "1" ]; then
 	# make module
 	echo -e "\e[1;31m Start Compile Module \e[0m"
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS -j${CORES} modules
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" -j${CORES} modules
 
 	# Compile Mali450 driver
 	echo -e "\e[1;31m Compile Mali450 Module \e[0m"
 	if [ ! -d $BUILD/lib ]; then
 		mkdir -p $BUILD/lib
 	fi 
-	make -C ${LINUX}/modules/gpu ARCH=arm64 CROSS_COMPILE=$TOOLS LICHEE_KDIR=${LINUX} LICHEE_MOD_DIR=$BUILD/lib LICHEE_PLATFORM=linux
+	make -C ${LINUX}/modules/gpu ARCH=arm64 CROSS_COMPILE="$TOOLS" LICHEE_KDIR=${LINUX} LICHEE_MOD_DIR=$BUILD/lib LICHEE_PLATFORM=linux
+
 	echo -e "\e[1;31m Build Mali450 succeed \e[0m"
 
-	# install module
+	# Install module
 	echo -e "\e[1;31m Start Install Module \e[0m"
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS -j${CORES} modules_install INSTALL_MOD_PATH=$BUILD
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" -j${CORES} modules_install INSTALL_MOD_PATH=$BUILD
 	# Install mali driver
 	MALI_MOD_DIR=$BUILD/lib/modules/`cat $LINUX/include/config/kernel.release 2> /dev/null`/kernel/drivers/gpu
 	install -d $MALI_MOD_DIR
@@ -86,7 +86,7 @@ fi
 if [ $BUILD_KERNEL = "1" ]; then
 	# compile dts
 	echo -e "\e[1;31m Start Compile DTS \e[0m"
-	make -C $LINUX ARCH=arm64 CROSS_COMPILE=$TOOLS -j${CORES} dtbs
+	make -C $LINUX ARCH=arm64 CROSS_COMPILE="$TOOLS" -j${CORES} dtbs
 	#$ROOT/kernel/scripts/dtc/dtc -Odtb -o "$BUILD/OrangePiH5.dtb" "$LINUX/arch/arm64/boot/dts/${PLATFORM}.dts"
 	## DTB conver to DTS
 	# Command:
@@ -115,13 +115,5 @@ EOF
 	cp -rfa $ROOT/external/initrd.img $BUILD
 fi 
 
-clear
 whiptail --title "OrangePi Build System" --msgbox \
 	"Build Kernel OK. The path of output file: ${BUILD}" 10 80 0
-
-
-
-
-
-
-

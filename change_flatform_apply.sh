@@ -103,7 +103,7 @@ function BackupFile()
     cp $ROOT/external/BUFFER/FILE/OrangePiH5_PC2_.config $ROOT/kernel/arch/arm64/configs/OrangePiH5_PC2_defconfig   
     cp $ROOT/external/BUFFER/FILE/OrangePiH5_Prima_.config $ROOT/kernel/arch/arm64/configs/OrangePiH5_Prima_defconfig   
     cp $ROOT/external/BUFFER/FILE/OrangePiH5_Zero_Plus2_.config $ROOT/kernel/arch/arm64/configs/OrangePiH5_Zero_Plus2_defconfig
-    
+
     # Backup uboot/../config
     cp $ROOT/external/BUFFER/FILE/OrangePiH5_PC2_sun50iw2p1.h $ROOT/uboot/include/configs/OrangePiH5_PC2_sun50iw2p1.h
     cp $ROOT/external/BUFFER/FILE/OrangePiH5_Prima_sun50iw2p1.h $ROOT/uboot/include/configs/OrangePiH5_Prima_sun50iw2p1.h
