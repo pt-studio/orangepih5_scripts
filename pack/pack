@@ -87,14 +87,18 @@ function do_prepare()
 
 	printf "copying boot file\n"
 	for file in ${boot_file_list[@]} ; do
-		cp -f `echo $file | awk -F: '{print $1}'` \
-			`echo $file | awk -F: '{print $2}'` 2>/dev/null
+		local file_a=`echo $file | awk -F: '{print $1}'`
+		local file_b=`echo $file | awk -F: '{print $2}'`
+		pack_info "$file_a => $file_b"
+		cp -rf $file_a $file_b
 	done
 
 	if [ "x${PACK_PLATFORM}" = "xdragonboard" -a -f ${OUTPUT}/sys_partition_dragonboard.fex ] ; then
+		pack_info "xdragonboard"
 		mv ${OUTPUT}/sys_partition_dragonboard.fex ${OUTPUT}/sys_partition.fex
 		if [ "${PACK_CHIP}" == "sun50iw2p1" -a -n "`grep "dragonboard_test" "out/sys_config.fex" | grep "1" | grep -v ";"`" ]; then
-            sed -i '/\[nand0_para\]/a\nand0_dragonboard = 1' ${OUTPUT}/sys_config.fex
+            pack_info "xdragonboard sun50iw2p1"
+			sed -i '/\[nand0_para\]/a\nand0_dragonboard = 1' ${OUTPUT}/sys_config.fex
 	    fi
 	fi
 
@@ -103,10 +107,13 @@ function do_prepare()
 	sed -i 's/\\boot-resource/\/boot-resource/g' ${OUTPUT}/boot-resource.ini
 	sed -i 's/\\\\/\//g' ${OUTPUT}/image.cfg
 	sed -i 's/^imagename/;imagename/g' ${OUTPUT}/image.cfg
+	
+	pack_info "finish do_prepare"
 }
 
 function do_ini_to_dts()
 {
+	pack_info "begin do_ini_to_dts"
 	local DTC_COMPILER=${KERNEL}/scripts/dtc/dtc
 	local DTC_DEP_FILE=${KERNEL}/arch/$ARCH/boot/dts/.${PACK_CHIP}-${PACK_BOARD}.dtb.d.dtc.tmp
 	local DTC_SRC_PATH=${KERNEL}/arch/$ARCH/boot/dts/
@@ -141,7 +148,7 @@ function do_ini_to_dts()
 		fi
 	fi
 
-	printf "Conver script to dts ok.\n"
+	pack_info "Conver script to dts ok."
 	return
 }
 
@@ -172,22 +179,22 @@ function do_common()
 		update_uboot_fdt u-boot.fex sunxi.fex u-boot.fex >/dev/null
 	fi
 	if [ -f "scp.fex" ]; then
-		echo "update scp"
+		pack_info "update scp"
 		update_scp scp.fex sunxi.fex >/dev/null
 	fi
 
 
 	# Those files for Nand or Card
-	update_boot0 boot0_nand.fex		sys_config.bin NAND > /dev/null
-	update_boot0 boot0_sdcard.fex	sys_config.bin SDMMC_CARD > /dev/null
-	update_uboot u-boot.fex         sys_config.bin > /dev/null
-	update_fes1  fes1.fex           sys_config.bin > /dev/null
-	fsbuild	     boot-resource.ini  split_xxxx.fex > /dev/null
+	update_boot0 boot0_nand.fex		sys_config.bin NAND #> /dev/null
+	update_boot0 boot0_sdcard.fex	sys_config.bin SDMMC_CARD #> /dev/null
+	update_uboot u-boot.fex         sys_config.bin #> /dev/null
+	update_fes1  fes1.fex           sys_config.bin #> /dev/null
+	fsbuild	     boot-resource.ini  split_xxxx.fex #> /dev/null
 	cp -f boot-resource.fex	bootloader.fex
 
 	# for Nor board
 	if [ -f sys_partition_nor.fex ];  then
-		echo "pack boot package"
+		pack_info "pack boot package"
 		busybox unix2dos boot_package_nor.cfg
 		dragonsecboot -pack boot_package_nor.cfg
 		if [ $? -ne 0 ]; then
@@ -198,7 +205,7 @@ function do_common()
 	fi
 	# for Nand/emmc board
 	if [ -f boot_package.cfg ]; then
-		echo "pack boot package"
+		pack_info "pack boot package"
 		busybox unix2dos boot_package.cfg
 		dragonsecboot -pack boot_package.cfg
 		if [ $? -ne 0 ]; then
@@ -219,11 +226,14 @@ function do_common()
 		echo "used multi config"
 	fi
 	# Copy dtb
-	cp $ROOT/output/pack/out/sunxi.fex $ROOT/output/OrangePiH5.dtb
+	mkdir -p $ROOT/output/boot/orangepi/
+	cp $ROOT/output/pack/out/sunxi.fex $ROOT/output/boot/orangepi/OrangePiH5.dtb
 
 	# Clear Space
 	rm $ROOT/output/sunxi.dtb
 	rm $ROOT/output/sys_config_fix.fex
+	
+	pack_info "finish"
 }
 
 do_prepare

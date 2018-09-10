@@ -1,403 +1,209 @@
-#!/bin/bash
-set -e
-########################################################################
-##
-##
-## Build rootfs
-########################################################################
+# Copyright (c) 2015 Igor Pecovnik, igor.pecovnik@gma**.com
+# Copyright (c) 2018 PT Studio
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
 
-export PATH=$PATH:/sbin:/usr/local/sbin:/usr/sbin
+# This file is contain some part of the Armbian build script
+# https://github.com/armbian/build/
 
-if [ -z $ROOT ]; then
-	ROOT=`cd .. && pwd`
-fi
+# Functions:
+# create_rootfs_cache
+# debootstrap_ng
 
-if [ -z $1 ]; then
-	DISTRO="jessie"
-else
-	DISTRO=$1
-fi
+create_rootfs_cache()
+{
+	local packages_hash="20180906"
+	local cache_fname=$SRC/cache/rootfs/${RELEASE}-ng-$ARCH.$packages_hash.tar.lz4
+	local display_name=${RELEASE}-ng-$ARCH.${packages_hash}.tar.lz4
 
-BUILD="$ROOT/external"
-OUTPUT="$ROOT/output"
-DEST="$OUTPUT/rootfs"
-LINUX="$ROOT/kernel"
-SCRIPTS="$ROOT/scripts"
-
-if [ -z "$DEST" -o -z "$LINUX" ]; then
-	echo "Usage: $0 <destination-folder> <linux-folder> [distro] $DEST"
-	exit 1
-fi
-
-if [ "$(id -u)" -ne "0" ]; then
-	echo "This script requires root."
-	exit 1
-fi
-
-DEST=$(readlink -f "$DEST")
-LINUX=$(readlink -f "$LINUX")
-
-if [ ! -d "$DEST" ]; then
-	echo "Destination $DEST not found or not a directory."
-	echo "Create $DEST"
-	mkdir -p $DEST
-fi
-
-if [ "$(ls -A -Ilost+found $DEST)" ]; then
-	echo "Destination $DEST is not empty."
-	echo "Clean up space."
-	rm -rf $DEST/*
-fi
-
-if [ -z "$DISTRO" ]; then
-	DISTRO="xenial"
-fi
-
-TEMP=$(mktemp -d)
-cleanup() {
-	if [ -e "$DEST/proc/cmdline" ]; then
-		umount "$DEST/proc"
-	fi
-	if [ -d "$DEST/sys/kernel" ]; then
-		umount "$DEST/sys"
-	fi
-	if [ -d "$TEMP" ]; then
-		rm -rf "$TEMP"
-	fi
-}
-trap cleanup EXIT
-
-ROOTFS=""
-UNTAR="bsdtar -xpf"
-METHOD="download"
-
-case $DISTRO in
-	arch)
-		ROOTFS="http://archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
-		;;
-	xenial)
-		ROOTFS="http://cdimage.ubuntu.com/ubuntu-base/xenial/daily/current/xenial-base-arm64.tar.gz"
-		;;
-	sid|jessie)
-		ROOTFS="${DISTRO}-base-arm64.tar.gz"
-		METHOD="debootstrap"
-		;;
-	*)
-		echo "Unknown distribution: $DISTRO"
-		exit 1
-		;;
-esac
-
-deboostrap_rootfs() {
-	dist="$1"
-	tgz="$(readlink -f "$2")"
-
-	[ "$TEMP" ] || exit 1
-	cd $TEMP && pwd
-
-	# this is updated very seldom, so is ok to hardcode
-	debian_archive_keyring_deb='http://httpredir.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2014.3_all.deb'
-	wget -O keyring.deb "$debian_archive_keyring_deb"
-	ar -x keyring.deb && rm -f control.tar.gz debian-binary && rm -f keyring.deb
-	DATA=$(ls data.tar.*) && compress=${DATA#data.tar.}
-
-	KR=debian-archive-keyring.gpg
-	bsdtar --include ./usr/share/keyrings/$KR --strip-components 4 -xvf "$DATA"
-	rm -f "$DATA"
-
-	apt-get -y install debootstrap qemu-user-static
-
-	qemu-debootstrap --arch=arm64 --keyring=$TEMP/$KR $dist rootfs http://httpredir.debian.org/debian
-	rm -f $KR
-
-	# keeping things clean as this is copied later again
-	rm -f rootfs/usr/bin/qemu-aarch64-static
-
-	bsdtar -C $TEMP/rootfs -a -cf $tgz .
-	rm -fr $TEMP/rootfs
-
-	cd -
-
-}
-
-
-TARBALL="$BUILD/$(basename $ROOTFS)"
-if [ ! -e "$TARBALL" ]; then
-	if [ "$METHOD" = "download" ]; then
-		echo "Downloading $DISTRO rootfs tarball ..."
-		wget -O "$TARBALL" "$ROOTFS"
-	elif [ "$METHOD" = "debootstrap" ]; then
-		deboostrap_rootfs "$DISTRO" "$TARBALL"
+	if [[ -f $cache_fname ]]; then
+		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
+		display_alert "Extracting $display_name" "$date_diff days old" "info"
+		pv -p -b -r -c -N "$display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
 	else
-		echo "Unknown rootfs creation method"
-		exit 1
-	fi
-fi
+		display_alert "Creating new rootfs for" "$RELEASE" "info"
 
-# Extract with BSD tar
-echo -n "Extracting ... "
-set -x
-$UNTAR "$TARBALL" -C "$DEST"
-echo "OK"
+		# apt-cacher-ng apt-get proxy parameter
+		local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
+		local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$UBUNTU_MIRROR"
 
-# Add qemu emulation.
-cp /usr/bin/qemu-aarch64-static "$DEST/usr/bin"
+		# fancy progress bars
+		[[ -z $OUTPUT_DIALOG ]] && local apt_extra_progress="--show-progress -o DPKG::Progress-Fancy=1"
 
-# Prevent services from starting
-cat > "$DEST/usr/sbin/policy-rc.d" <<EOF
-#!/bin/sh
-exit 101
-EOF
-chmod a+x "$DEST/usr/sbin/policy-rc.d"
+		display_alert "Installing base system" "Stage 1/2" "info"
+		eval 'debootstrap --include=${DEBOOTSTRAP_LIST} \
+			--arch=$ARCH \
+			--foreign $RELEASE \
+			$SDCARD/ $apt_mirror' \
+			| tee -a $DEST/debootstrap.log
 
-do_chroot() {
-	cmd="$@"
-	chroot "$DEST" mount -t proc proc /proc || true
-	chroot "$DEST" mount -t sysfs sys /sys || true
-	chroot "$DEST" $cmd
-	chroot "$DEST" umount /sys
-	chroot "$DEST" umount /proc
-}
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system first stage failed"
 
-add_platform_scripts() {
-	# Install platform scripts
-	mkdir -p "$DEST/usr/local/sbin"
-	cp -av ./platform-scripts/* "$DEST/usr/local/sbin"
-	chown root.root "$DEST/usr/local/sbin/"*
-	chmod 755 "$DEST/usr/local/sbin/"*
-}
+		cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
 
-add_mackeeper_service() {
-	cat > "$DEST/etc/systemd/system/eth0-mackeeper.service" <<EOF
-[Unit]
-Description=Fix eth0 mac address to uEnv.txt
-After=systemd-modules-load.service local-fs.target
+		mkdir -p $SDCARD/usr/share/keyrings/
+		cp /usr/share/keyrings/debian-archive-keyring.gpg $SDCARD/usr/share/keyrings/
+		cp /usr/share/keyrings/ubuntu-archive-keyring.gpg $SDCARD/usr/share/keyrings/
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/OrangePi_eth0-mackeeper.sh
+		display_alert "Installing base system" "Stage 2/2" "info"
+		eval 'chroot $SDCARD /bin/bash -c "/debootstrap/debootstrap --second-stage"' \
+			| tee -a $DEST/debootstrap.log
 
-[Install]
-WantedBy=multi-user.target
-EOF
-	do_chroot systemctl enable eth0-mackeeper
-}
+		[[ ${PIPESTATUS[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system second stage failed"
 
-add_corekeeper_service() {
-	cat > "$DEST/etc/systemd/system/cpu-corekeeper.service" <<EOF
-[Unit]
-Description=CPU corekeeper
+		mount_chroot "$SDCARD"
 
-[Service]
-ExecStart=/usr/local/sbin/OrangePi_corekeeper.sh
+		# policy-rc.d script prevents starting or reloading services during image creation
+		printf '#!/bin/sh\nexit 101' > $SDCARD/usr/sbin/policy-rc.d
+		chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --add /sbin/initctl"
+		chroot $SDCARD /bin/bash -c "dpkg-divert --quiet --local --rename --add /sbin/start-stop-daemon"
+		printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > $SDCARD/sbin/start-stop-daemon
+		printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' > $SDCARD/sbin/initctl
+		chmod 755 $SDCARD/usr/sbin/policy-rc.d
+		chmod 755 $SDCARD/sbin/initctl
+		chmod 755 $SDCARD/sbin/start-stop-daemon
 
-[Install]
-WantedBy=multi-user.target
-EOF
-	do_chroot systemctl enable cpu-corekeeper
-}
+		# stage: configure language and locales
+		display_alert "Configuring locales" "$DEST_LANG" "info"
 
-add_ssh_keygen_service() {
-	cat > "$DEST/etc/systemd/system/ssh-keygen.service" <<EOF
-[Unit]
-Description=Generate SSH keys if not there
-Before=ssh.service
-ConditionPathExists=|!/etc/ssh/ssh_host_key
-ConditionPathExists=|!/etc/ssh/ssh_host_key.pub
-ConditionPathExists=|!/etc/ssh/ssh_host_rsa_key
-ConditionPathExists=|!/etc/ssh/ssh_host_rsa_key.pub
-ConditionPathExists=|!/etc/ssh/ssh_host_dsa_key
-ConditionPathExists=|!/etc/ssh/ssh_host_dsa_key.pub
-ConditionPathExists=|!/etc/ssh/ssh_host_ecdsa_key
-ConditionPathExists=|!/etc/ssh/ssh_host_ecdsa_key.pub
-ConditionPathExists=|!/etc/ssh/ssh_host_ed25519_key
-ConditionPathExists=|!/etc/ssh/ssh_host_ed25519_key.pub
+		[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen $DEST_LANG"'
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=$DEST_LANG"'
 
-[Service]
-ExecStart=/usr/bin/ssh-keygen -A
-Type=oneshot
-RemainAfterExit=yes
-
-[Install]
-WantedBy=ssh.service
-EOF
-	do_chroot systemctl enable ssh-keygen
-}
-
-add_disp_udev_rules() {
-	cat > "$DEST/etc/udev/rules.d/90-sunxi-disp-permission.rules" <<EOF
-KERNEL=="disp", MODE="0770", GROUP="video"
-KERNEL=="cedar_dev", MODE="0770", GROUP="video"
-KERNEL=="ion", MODE="0770", GROUP="video"
-KERNEL=="mali", MODE="0770", GROUP="video"
-EOF
-}
-
-add_debian_apt_sources() {
-	local release="$1"
-	local aptsrcfile="$DEST/etc/apt/sources.list"
-	cat > "$aptsrcfile" <<EOF
-deb http://httpredir.debian.org/debian ${release} main contrib non-free
-#deb-src http://httpredir.debian.org/debian ${release} main contrib non-free
-EOF
-	# No separate security or updates repo for unstable/sid
-	[ "$release" = "sid" ] || cat >> "$aptsrcfile" <<EOF
-deb http://httpredir.debian.org/debian ${release}-updates main contrib non-free
-#deb-src http://httpredir.debian.org/debian ${release}-updates main contrib non-free
-
-deb http://security.debian.org/ ${release}/updates main contrib non-free
-#deb-src http://security.debian.org/ ${release}/updates main contrib non-free
-EOF
-}
-
-add_ubuntu_apt_sources() {
-	local release="$1"
-	cat > "$DEST/etc/apt/sources.list" <<EOF
-deb http://ports.ubuntu.com/ ${release} main restricted universe multiverse
-deb-src http://ports.ubuntu.com/ ${release} main restricted universe multiverse
-
-deb http://ports.ubuntu.com/ ${release}-updates main restricted universe multiverse
-deb-src http://ports.ubuntu.com/ ${release}-updates main restricted universe multiverse
-
-deb http://ports.ubuntu.com/ ${release}-security main restricted universe multiverse
-deb-src http://ports.ubuntu.com/ ${release}-security main restricted universe multiverse
-
-deb http://ports.ubuntu.com/ ${release}-backports main restricted universe multiverse
-deb-src http://ports.ubuntu.com/ ${release}-backports main restricted universe multiverse
-EOF
-}
-
-add_asound_state() {
-	mkdir -p "$DEST/var/lib/alsa"
-	cp -vf $BUILD/asound.state "$DEST/var/lib/alsa/asound.state"
-}
-
-# Run stuff in new system.
-case $DISTRO in
-	arch)
-		# Cleanup preinstalled Kernel
-		mv "$DEST/etc/resolv.conf" "$DEST/etc/resolv.conf.dist"
-		cp /etc/resolv.conf "$DEST/etc/resolv.conf"
-		sed -i 's|CheckSpace|#CheckSpace|' "$DEST/etc/pacman.conf"
-		do_chroot pacman -Rsn --noconfirm linux-aarch64 || true
-		do_chroot pacman -Sy --noconfirm --needed dosfstools curl xz iw rfkill netctl dialog wpa_supplicant alsa-utils || true
-		add_platform_scripts
-		add_mackeeper_service
-		add_corekeeper_service
-		add_disp_udev_rules
-		add_asound_state
-		rm -f "$DEST/etc/resolv.conf"
-		mv "$DEST/etc/resolv.conf.dist" "$DEST/etc/resolv.conf"
-		sed -i 's|#CheckSpace|CheckSpace|' "$DEST/etc/pacman.conf"
-		;;
-	xenial|sid|jessie)
-		rm "$DEST/etc/resolv.conf"
-		cp /etc/resolv.conf "$DEST/etc/resolv.conf"
-		if [ "$DISTRO" = "xenial" ]; then
-			DEB=ubuntu
-			DEBUSER=orangepi
-			EXTRADEBS="software-properties-common zram-config ubuntu-minimal nano"
-			ADDPPACMD=
-			#DISPTOOLCMD="apt-get -y install sunxi-disp-tool"
-			DISPTOOLCMD=
-		elif [ "$DISTRO" = "sid" -o "$DISTRO" = "jessie" ]; then
-			DEB=debian
-			DEBUSER=orangepi
-			EXTRADEBS="sudo"
-			ADDPPACMD=
-			DISPTOOLCMD=
-		else
-			echo "Unknown DISTRO=$DISTRO"
-			exit 2
+		if [[ -f $SDCARD/etc/default/console-setup ]]; then
+			sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
+				-e 's/CODESET=.*/CODESET="guess"/' -i $SDCARD/etc/default/console-setup
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "setupcon --save"'
 		fi
-		add_${DEB}_apt_sources $DISTRO
-		cat > "$DEST/second-phase" <<EOF
-#!/bin/sh
-export DEBIAN_FRONTEND=noninteractive
-export http_proxy=http://127.0.0.1:3142/
-export https_proxy=http://127.0.0.1:3142/
-apt-get -y update
-apt-get -y install locales
-locale-gen en_US.UTF-8
-apt-get -y install dosfstools curl xz-utils iw rfkill wpasupplicant openssh-server alsa-utils $EXTRADEBS
-apt-get -y remove --purge ureadahead
-$ADDPPACMD
-apt-get -y update
-$DISPTOOLCMD
-adduser --gecos $DEBUSER --disabled-login $DEBUSER --uid 1000
-adduser --gecos root --disabled-login root --uid 0
-chown -R 1000:1000 /home/$DEBUSER
-echo "$DEBUSER:$DEBUSER" | chpasswd
-usermod -a -G sudo,adm,input,video,plugdev $DEBUSER
-apt-get -y autoremove
-apt-get clean
-rm -rf /var/lib/apt/lists/*
 
-rm -f /etc/resolv.conf
-ln -s /run/resolvconf/resolv.conf /etc/resolv.conf
+		# stage: create apt sources list
+		create_sources_list "$RELEASE" "$SDCARD/"
 
-rm -rf /etc/ssh/ssh_host_*
+		# compressing packages list to gain some space
+		echo "Acquire::GzipIndexes "true"; Acquire::CompressionTypes::Order:: "gz";" > $SDCARD/etc/apt/apt.conf.d/02compress-indexes
+		echo "Acquire::Languages "none";" > $SDCARD/etc/apt/apt.conf.d/no-languages
 
-EOF
-		chmod +x "$DEST/second-phase"
-		do_chroot /second-phase
-		cat > "$DEST/etc/network/interfaces.d/eth0" <<EOF
-auto eth0
-iface eth0 inet dhcp
-EOF
-		cat > "$DEST/etc/hostname" <<EOF
-Orangepi
-EOF
-		cat > "$DEST/etc/hosts" <<EOF
-127.0.0.1 localhost
-127.0.1.1 orangepi
+		# add armhf arhitecture to arm64
+		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
 
-# The following lines are desirable for IPv6 capable hosts
-::1     localhost ip6-localhost ip6-loopback
-fe00::0 ip6-localnet
-ff00::0 ip6-mcastprefix
-ff02::1 ip6-allnodes
-ff02::2 ip6-allrouters
-EOF
-		add_platform_scripts
-		add_mackeeper_service
-		add_corekeeper_service
-		add_ssh_keygen_service
-		add_disp_udev_rules
-		add_asound_state
+		# this should fix resolvconf installation failure in some cases
+		chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
 
-		sed -i 's|After=rc.local.service|#\0|;' "$DEST/lib/systemd/system/serial-getty@.service"
-		rm -f "$DEST/second-phase"
-		;;
-	*)
-		;;
-esac
+		# stage: update packages list
+		display_alert "Updating package list" "$RELEASE" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "apt-get -q -y $apt_extra update"' \
+			| tee -a $DEST/debootstrap.log
 
-# Bring back folders
-mkdir -p "$DEST/lib"
-mkdir -p "$DEST/usr"
+		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Updating package lists failed"
 
-# Create fstab
-cat <<EOF > "$DEST/etc/fstab"
-# <file system>	<dir>	<type>	<options>			<dump>	<pass>
-/dev/mmcblk1p1	/boot	vfat	defaults				1		2
-/dev/mmcblk1p2	/		ext4	defaults,noatime		1		1
-EOF
+		# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
+		display_alert "Upgrading base packages" "$RELEASE" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress upgrade"' \
+			| tee -a $DEST/debootstrap.log
 
-# Clean up
-rm -f "$DEST/usr/bin/qemu-aarch64-static"
-rm -f "$DEST/usr/sbin/policy-rc.d"
+		#[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Upgrading base packages failed"
 
-rm -rf $DEST/lib/modules
-mkdir -p "$DEST/lib/modules"
+		# stage: install additional packages
+		display_alert "Installing packages for" "$RELEASE" "info"
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -y -q \
+			$apt_extra $apt_extra_progress --no-install-recommends install $PACKAGE_LIST"' \
+			| tee -a $DEST/debootstrap.log
 
-echo 'Install kernel modules'
-make -C $LINUX ARCH=arm64 CROSS_COMPILE="${LINUX_TOOLCHAIN}" modules_install INSTALL_MOD_PATH="$DEST"
+		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Installation of additional packages failed"
 
-echo 'Install mali driver'
-MALI_MOD_DIR_REL=lib/modules/`cat $LINUX/include/config/kernel.release 2> /dev/null`/kernel/drivers/gpu
-install -d "$DEST"/"$MALI_MOD_DIR_REL"
-cp "$OUTPUT"/"$MALI_MOD_DIR_REL"/mali.ko "$DEST"/"$MALI_MOD_DIR_REL"
+		# DEBUG: print free space
+		echo -e "\nFree space:"
+		eval 'df -h' | tee -a $DEST/debootstrap.log
 
-echo 'Install kernel firmware'
-make -C $LINUX ARCH=arm64 CROSS_COMPILE="${LINUX_TOOLCHAIN}" firmware_install INSTALL_MOD_PATH="$DEST"
+		# stage: remove downloaded packages
+		chroot $SDCARD /bin/bash -c "apt-get clean"
+
+		# this is needed for the build process later since resolvconf generated file in /run is not saved
+		rm $SDCARD/etc/resolv.conf
+		echo 'nameserver 1.1.1.1' >> $SDCARD/etc/resolv.conf
+
+		# stage: make rootfs cache archive
+		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
+		sync
+		# the only reason to unmount here is compression progress display
+		# based on rootfs size calculation
+		umount_chroot "$SDCARD"
+
+		tar cp --xattrs \
+			--directory=$SDCARD/ \
+			--exclude='./dev/*' \
+			--exclude='./proc/*' \
+			--exclude='./run/*' \
+			--exclude='./tmp/*' \
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -c > $cache_fname
+
+	fi
+
+	mount_chroot "$SDCARD"
+}
+
+debootstrap_ng() {
+	display_alert "Starting rootfs and image building process for" "$BOARD $RELEASE" "info"
+
+	# trap to unmount stuff in case of error/manual interruption
+	trap unmount_on_exit INT TERM EXIT
+
+	# stage: clean and create directories
+	rm -rf $SDCARD $MOUNT
+	mkdir -p $SDCARD $MOUNT $SRC/cache/rootfs
+
+	# stage: verify tmpfs configuration and mount
+	# default maximum size for tmpfs mount is 1/2 of available RAM
+	# CLI needs ~1.2GiB+ (Xenial CLI), Desktop - ~2.8GiB+ (Xenial Desktop w/o HW acceleration)
+	# calculate and set tmpfs mount to use 2/3 of available RAM
+	local phymem=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 * 2 / 3 )) # MiB
+	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
+	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
+	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
+		local use_tmpfs=yes
+	fi
+	[[ -n $FORCE_TMPFS_SIZE ]] && phymem=$FORCE_TMPFS_SIZE
+
+	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${phymem}M tmpfs $SDCARD
+
+	# stage: prepare basic rootfs: unpack cache or create from scratch
+	create_rootfs_cache
+
+	# install distribution and board specific applications
+	display_alert "Install distribution specific" "target" "info"
+	install_distribution_specific
+	display_alert "Install common" "target" "info"
+	install_common
+
+	# Install kernel modules + firmware
+	rm -rf $SDCARD/lib/modules
+	mkdir -p "$SDCARD/lib/modules"
+
+	display_alert "Install kernel modules and firmware" "target" "info"
+	rsync -avzq --chown=root:root $OUTPUT_PATH/lib/ $SDCARD/lib/
+
+	display_alert "Install custom blobs firmware" "target" "info"
+	rsync -avzq --chown=root:root $EXTERNAL_PATH/firmware/ $SDCARD/lib/firmware/
+	
+	chroot_installpackages_local
+	post_debootstrap_tweaks
+
+	# clean up / prepare for making the image
+	umount_chroot "$SDCARD"
+
+	# stage: unmount tmpfs
+	#[[ $use_tmpfs = yes ]] && umount $SDCARD
+	#rm -rf $SDCARD
+
+	# remove exit trap
+	trap - INT TERM EXIT
+	display_alert "Build rootfs done" "target" "info"
+}
+
+build_rootfs() {
+	debootstrap_ng
+
+}
